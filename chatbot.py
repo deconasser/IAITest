@@ -1,36 +1,18 @@
 import torch
 import numpy as np
-import transformers
-from transformers import AutoTokenizer, AutoModel
-from sklearn.metrics.pairwise import cosine_similarity
-from transformers import AutoModelForCausalLM, AutoTokenizer
-from sentence_transformers import SentenceTransformer
 import requests
+import faiss  # ANN Search library (need to install via pip install faiss-cpu)
+from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
 import os
 from groq import Groq
-from mem0 import Memory
+from ChatbotHistoryManager import ChatbotHistoryManager
 
 
-os.environ["GROQ_API_KEY"] = ""
-# Cấu hình cho Groq Llama
-config = {
-    "embedder": {
-        "provider": "huggingface",
-        "config": {
-            "model": "multi-qa-MiniLM-L6-cos-v1"
-        }
-    },
-    "llm": {
-        "provider": "groq",
-        "config": {
-            "model": "llama-3.1-70b-Versatile",  # Chọn model từ Groq Llama
-            "temperature": 0.1,  # điều chỉnh độ sáng tạo của mô hình
-            "max_tokens": 1000,  # Giới hạn số lượng token
-        }
-    }
-}
-# Khởi tạo đối tượng Memory từ cấu hình trên
-m = Memory.from_config(config)
+
+chat_memory = ChatbotHistoryManager(window_size=8, max_tokens=4096)
+
+os.environ["GROQ_API_KEY"] = "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"
 
 global_system_prompt = """
 You are Podwise AI, a highly specialized assistant for answering podcast-related questions. Always respond as Podwise AI, and ensure that your answers are tailored to the user's query based on the podcast metadata and general information about the podcast industry. 
@@ -58,7 +40,7 @@ def generate_pseudo_questions(podcast_metadata, num_questions=10):
     prompt = f"Generate {num_questions} questions based on the following podcast metadata: {podcast_metadata}"
 
     client = Groq(
-        api_key="",
+        api_key="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",
     )
     # Gửi request đến API inference của Groq
     chat_completion = client.chat.completions.create(
@@ -77,24 +59,23 @@ def generate_pseudo_questions(podcast_metadata, num_questions=10):
     return questions
 
 
-def calculate_similarity(user_question_emb, question_group_emb):
+def calculate_similarity(user_question_emb, question_group_emb, func):
     # Chuyển embedding của câu hỏi thành numpy array và reshape thành 2D
     user_emb = user_question_emb.detach().cpu().numpy().reshape(1, -1)  # Reshape to (1, feature_dim)
 
     # Chuyển group thành 2D numpy array nếu chưa phải là 2D
-    group_emb = np.array([emb.detach().cpu().numpy().reshape(1, -1) for emb in
-                          question_group_emb])  # Reshape to (num_questions, feature_dim)
+    group_emb = np.array([emb.detach().cpu().numpy().reshape(1, -1) for emb in question_group_emb])  # Reshape to (num_questions, feature_dim)
 
     # Tính cosine similarity, so sánh giữa user_emb với từng câu trong group_emb
     similarities = cosine_similarity(user_emb, group_emb.squeeze(1))
 
-    return np.mean(similarities)
+    return np.mean(similarities) if func=="mean" else np.max(similarities)
 
 
 # Hàm quyết định route dựa vào điểm similarity
 def route_decision(user_question_emb, group1_emb, group2_emb):
-    score_group1 = calculate_similarity(user_question_emb, group1_emb)
-    score_group2 = calculate_similarity(user_question_emb, group2_emb)
+    score_group1 = calculate_similarity(user_question_emb, group1_emb, func="max")
+    score_group2 = calculate_similarity(user_question_emb, group2_emb, func="mean")
 
     if score_group1 >= score_group2:
         return "RAG System"  # Forward tới hệ thống RAG
@@ -102,9 +83,7 @@ def route_decision(user_question_emb, group1_emb, group2_emb):
         return "LLM"  # Forward tới mô hình LLM trực tiếp
 
 
-# Hàm xử lý câu hỏi với hệ thống RAG
-import numpy as np
-import faiss  # ANN Search library (need to install via pip install faiss-cpu)
+
 
 
 # Giả sử bạn đã có embedding của câu hỏi từ người dùng và embedding của các chunk tài liệu
@@ -150,7 +129,8 @@ def retrieve_relevant_chunks(question_embedding, document_embeddings, document_c
 
 # Bước 3: Ghép chunk vào câu hỏi của người dùng và tạo prompt
 def append_chunks_to_prompt(user_question, relevant_chunks):
-    prompt = f"{global_system_prompt}\nUser's question: {user_question}\n\nRelevant information from documents:\n"
+    history_chat = chat_memory.get_new_prompt(user_question)
+    prompt = f"{history_chat}\n\nRelevant information from documents:\n"
     for chunk in relevant_chunks:
         prompt += f"- {chunk}\n"
     return prompt
@@ -195,7 +175,7 @@ def process_question_with_rag(user_question):
     relevant_chunks = retrieve_relevant_chunks(user_question_emb, document_embeddings, document_chunks, k=3)
     final_prompt = append_chunks_to_prompt(user_question=user_question, relevant_chunks=relevant_chunks)
     client = Groq(
-        api_key="",
+        api_key="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",
     )
     # Gửi request đến API inference của Groq
     chat_completion = client.chat.completions.create(
@@ -203,11 +183,18 @@ def process_question_with_rag(user_question):
             {
                 "role": "user",
                 "content": final_prompt,
+            },
+            {
+                "role": "system",
+                "content": global_system_prompt
             }
         ],
         model="llama-3.1-70b-Versatile",
         temperature=0,
     )
+    print("final_prompt with rag: ", final_prompt)
+    # Add thêm vào history memory
+    chat_memory.add_conversation(user_question, chat_completion.choices[0].message.content)
 
     # Trả về kết quả
     return chat_completion.choices[0].message.content
@@ -215,10 +202,12 @@ def process_question_with_rag(user_question):
 
 # Hàm xử lý câu hỏi với LLM
 def process_question_with_llm(user_question):
+    history_chat = chat_memory.get_new_prompt(user_question)
     # Code xử lý với LLM
-    final_prompt = f"{global_system_prompt}\nUser's question: {user_question}"
+    final_prompt = f"{history_chat}"
+    print("final_prompt with llm: ", final_prompt)
     client = Groq(
-        api_key="",
+        api_key="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",
     )
     # Gửi request đến API inference của Groq
     chat_completion = client.chat.completions.create(
@@ -226,11 +215,17 @@ def process_question_with_llm(user_question):
             {
                 "role": "user",
                 "content": final_prompt,
+            },
+            {
+                "role": "system",
+                "content": global_system_prompt,
             }
         ],
         model="llama-3.1-70b-Versatile",
         temperature=1,
     )
+
+    chat_memory.add_conversation(user_question, chat_completion.choices[0].message.content)
 
     # Trả về kết quả
     return chat_completion.choices[0].message.content
@@ -238,37 +233,54 @@ def process_question_with_llm(user_question):
 
 # Hàm chính để xử lý câu hỏi từ người dùng
 def handle_question(user_question):
-    # Kiểm tra trong bộ nhớ cache
-    cached_answer = m.get(user_question)
-    if cached_answer:
-        return cached_answer
     # Bước 1: Lấy embedding cho câu hỏi người dùng
     user_question_emb = get_embedding(user_question)
 
     # Bước 2: Tạo danh sách câu hỏi giả từ podcast metadata và câu hỏi đời thường
     pseudo_questions_group1 = generate_pseudo_questions(
         "This podcast episode narrates the impressive growth journey of CVPartner, highlighting how the company evolved from a humble beginning with one customer to a robust operation with over 400 clients and significant revenue. Founder Erling discusses the strategic decisions behind their recent $3 million seed round, aimed at accelerating North American expansion, and shares valuable insights about personal growth and leadership influences, emphasizing a learning-oriented approach rather than solely focusing on financial gains.")
+
     general_questions_group2 = [
-        "What is the podcast mainly about?",
-        "Who are the guests in this episode?",
-        "Can you describe the key points discussed in the podcast?",
-        "What is the duration of the episode?",
-        "Who is the host of the podcast?",
-        "When was the episode released?",
-        "What is the purpose of this podcast?",
-        "Can you provide a summary of the episode?",
-        "What topics are covered in this episode?",
-        "What is the most important takeaway from the episode?",
-        "Is there any special guest featured in the episode?",
-        "What kind of audience is this podcast episode aimed at?",
-        "Does this episode reference any previous podcasts?",
-        "Can you list some of the resources or references mentioned in the episode?",
-        "Is there a specific theme or topic being discussed in the entire season?",
-        "What was the main highlight or event discussed in this episode?",
-        "Did the episode cover any current events or trending topics?",
-        "What advice or insights were shared in the episode?",
-        "Are there any key quotes or memorable moments from the episode?",
-        "What challenges or issues were discussed during the episode?"
+        "How are you today?",
+        "What’s your name?",
+        "Can you tell me where you're from?",
+        "What do you like to do in your free time?",
+        "Can you recommend any good podcasts to listen to?",
+        "What’s the weather like today where you are?",
+        "What’s your favorite movie or TV show?",
+        "Do you prefer listening to podcasts or watching videos?",
+        "What topics are usually discussed in podcasts?",
+        "Who is your favorite podcast host?",
+        "Can you tell me about the latest podcast episode you listened to?",
+        "What’s the best takeaway from a podcast episode you've heard?",
+        "Do you usually listen to podcasts alone or with someone?",
+        "What types of podcasts do you enjoy the most?",
+        "When was the last time you found a podcast episode really insightful?",
+        "Do you have any favorite podcast guests?",
+        "Can you tell me what topics are popular in podcasts lately?",
+        "Have you ever been inspired by something you heard on a podcast?",
+        "What do you think makes a good podcast?",
+        "How do you usually discover new podcasts to listen to?",
+        "What are some interesting topics you’ve come across recently?",
+        "How do you usually keep up with current events and trends?",
+        "What skills do you think are essential for success in today’s world?",
+        "What’s something new you learned recently?",
+        "What are your thoughts on the future of technology and its impact?",
+        "How do you stay productive during a busy day?",
+        "What inspires you the most in your daily life?",
+        "What do you think are the key factors for personal growth?",
+        "How do you balance work and life?",
+        "What are your views on the importance of education in modern society?",
+        "What motivates you to keep learning new things?",
+        "How do you usually approach problem-solving in difficult situations?",
+        "What are some habits that help you stay focused?",
+        "How do you stay organized when managing multiple tasks?",
+        "What are your thoughts on the role of creativity in different fields?",
+        "How do you usually reflect on your progress in life or work?",
+        "What are some effective ways to develop communication skills?",
+        "What do you think are the benefits of teamwork and collaboration?",
+        "How do you usually approach setting and achieving your goals?",
+        "What role do you think critical thinking plays in decision-making?"
     ]
 
     # Bước 3: Tính embedding cho các câu hỏi
@@ -284,8 +296,4 @@ def handle_question(user_question):
     else:
         answer = process_question_with_llm(user_question)
 
-    # Lưu vào cache
-    m.add(user_question, answer)
     return answer
-
-print(handle_question("You are chatbot?"))
