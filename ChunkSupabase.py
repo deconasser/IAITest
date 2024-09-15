@@ -1,8 +1,7 @@
 from supabase import create_client, Client
 import json
-supabase_url = ""
-supabase_key = ""
-supabase: Client = create_client(supabase_url, supabase_key)
+from config import SUPABASE_KEY, SUPABASE_URL
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
 # Lấy dữ liệu từ bảng 'json_data'

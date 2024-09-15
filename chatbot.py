@@ -9,16 +9,14 @@ from groq import Groq
 from ChatbotHistoryManager import ChatbotHistoryManager
 from sentence_transformers import SentenceTransformer
 from supabase import create_client, Client
+from config import SUPABASE_URL, SUPABASE_KEY, GROQ_API_KEY
 
 
 
-supabase_url = ""
-supabase_key = ""
-supabase: Client = create_client(supabase_url, supabase_key)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Memory
 chat_memory = ChatbotHistoryManager(window_size=8, max_tokens=4096)
 
-os.environ["GROQ_API_KEY"] = "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"
 
 global_system_prompt = """
 You are Podwise AI, a highly specialized assistant for answering podcast-related questions. Always respond as Podwise AI if asked, and ensure that your answers are tailored to the user's query based on the podcast metadata and general information about the podcast industry. 
@@ -29,7 +27,7 @@ If asked about your identity, respond as Podwise AI, and emphasize that you are 
 model = SentenceTransformer('all-MiniLM-L12-v2')
 def llm_blog(final_prompt, global_system_prompt, model, temperature):
     client = Groq(
-        api_key="",
+        api_key=GROQ_API_KEY,
     )
     # Gửi request đến API inference của Groq
     chat_completion = client.chat.completions.create(
