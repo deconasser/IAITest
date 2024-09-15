@@ -1,9 +1,8 @@
 import requests
 from groq import Groq
-from mem0 import Memory
 
 import os
-os.environ["GROQ_API_KEY"] = "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"
+os.environ["GROQ_API_KEY"] = ""
 
 class ChatbotHistoryManager:
     def __init__(self, window_size=8, max_tokens=4096, groq_api_key="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"):
@@ -41,6 +40,7 @@ class ChatbotHistoryManager:
         )
 
         summary = chat_completion.choices[0].message.content
+        print(">>>>>>>>>>>>summary", summary)
         self.history = [{'user': '', 'agent': summary}]
 
     def generate_prompt_from_history(self):
@@ -52,7 +52,7 @@ class ChatbotHistoryManager:
 
     def get_new_prompt(self, new_user_message):
         # Khởi tạo prompt với instruction rõ ràng cho LLM
-        prompt = f"""This is a conversation history between a user and an Podwise AI assistant. The Podwise AI assistant is tasked with answering questions based on the previous conversation and relevant documents. Use the conversation history below to generate a helpful response.\nConversation History:{self.generate_prompt_from_history()}"""
+        prompt = f"""The Podwise AI assistant is tasked with answering questions based on the previous conversation and relevant documents. Use the conversation history below to generate a helpful response.\nConversation History:{self.generate_prompt_from_history()}"""
 
         # Thêm câu hỏi mới của người dùng vào prompt
         prompt += f"\nUser's new question: {new_user_message}\n"
